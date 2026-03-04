@@ -10,12 +10,12 @@ import sys
 import random
 from pathlib import Path
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QMainWindow, QSlider, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QRadioButton, QButtonGroup,
     QGraphicsView, QGraphicsScene,
     QGroupBox, QFileDialog, QSpinBox, QSizePolicy, QCheckBox,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import (
     QPen, QBrush, QColor, QPainter, QFont, QPixmap,
     QPainterPath,
@@ -37,7 +37,7 @@ STEM = LS * 3.2    # stem length
 
 # Piano key dimensions
 PIANO_WKW = 20    # white key width
-PIANO_WKH = 86    # white key height
+PIANO_WKH = 100    # white key height
 PIANO_BKW = 13    # black key width
 PIANO_BKH = 54    # black key height
 PIANO_GAP = 42    # gap between label row and piano top
@@ -219,7 +219,7 @@ class MusicNotesApp(QMainWindow):
         grp_q = QGroupBox("Quiz")
         hq = QHBoxLayout(grp_q)
         hq.setContentsMargins(6, 4, 6, 4)
-        self.cb_quiz = QCheckBox("Random, without names and colors")
+        self.cb_quiz = QCheckBox("Random")
         self.cb_quiz.setChecked(False)
         self.cb_quiz.toggled.connect(self._redraw)
         hq.addWidget(self.cb_quiz)
@@ -233,12 +233,22 @@ class MusicNotesApp(QMainWindow):
         hp = QHBoxLayout(grp_p)
         hp.setContentsMargins(6, 4, 6, 4)
         self.cb_piano = QCheckBox("Show")
+        self.cb_piano_overlap = QCheckBox("Overlap Staff")
         self.cb_piano_col = QCheckBox("Colored")
+        self.cb_piano_opacity = QSlider(Qt.Orientation.Horizontal)
+        self.cb_piano_opacity.setRange(0, 100)
+        self.cb_piano_opacity.setValue(100)
+        self.cb_piano_opacity.setFixedWidth(100)
+        self.cb_piano_opacity.setToolTip("Piano opacity")
         self.cb_piano.setChecked(False)
         self.cb_piano.toggled.connect(self._redraw)
+        self.cb_piano_overlap.toggled.connect(self._redraw)
         self.cb_piano_col.toggled.connect(self._redraw)
+        self.cb_piano_opacity.valueChanged.connect(self._redraw)
         hp.addWidget(self.cb_piano)
+        hp.addWidget(self.cb_piano_overlap)
         hp.addWidget(self.cb_piano_col)
+        hp.addWidget(self.cb_piano_opacity)
 
         toolbar.addWidget(grp_n)
         toolbar.addWidget(grp_l)
@@ -314,9 +324,12 @@ class MusicNotesApp(QMainWindow):
         treble_lry       = max(TREBLE_TOP + 4*LS + 12, treble_bottom_y + NR + 8)
         treble_piano_top = treble_lry + PIANO_GAP
 
-        # ── BASS_TOP: clear treble piano (if shown) + gap for above-bass notes ──
-        if show_piano:
-            below_treble = treble_piano_top + PIANO_WKH + 24   # bottom of piano incl octave labels
+        overlap = show_piano and self.cb_piano_overlap.isChecked()
+
+        # ── BASS_TOP: in overlap mode keys sit behind notes so no vertical
+        #    space is needed below the treble staff for the piano ──
+        if show_piano and not overlap:
+            below_treble = treble_piano_top + PIANO_WKH + 24
         else:
             below_treble = treble_lry + 18
         BASS_TOP = below_treble + 60 + N * LS
@@ -325,6 +338,11 @@ class MusicNotesApp(QMainWindow):
         bass_bottom_y = BASS_TOP + bass_max_step * (LS / 2)
         bass_lry      = max(BASS_TOP + 4*LS + 12, bass_bottom_y + NR + 8)
         bass_piano_top = bass_lry + PIANO_GAP
+
+        # ── In overlap mode the key bounds are computed from actual note positions ──
+        # (will be filled in after _draw_notes returns)
+        treble_key_top = treble_key_bot = None
+        bass_key_top   = bass_key_bot   = None
 
         pen_staff = QPen(QColor(20, 20, 20), 1.6)
 
@@ -339,10 +357,18 @@ class MusicNotesApp(QMainWindow):
         treble_pos = self._draw_notes(TREBLE_TOP, MARGIN_LEFT + CLEF_W, NOTE_STEP, treble_notes)
         bass_pos   = self._draw_notes(BASS_TOP,   MARGIN_LEFT + CLEF_W, NOTE_STEP, bass_notes)
 
+        if overlap:
+            treble_key_top = min(yn - NR for (_, yn, _, _) in treble_pos) - 2
+            treble_key_bot = max(yn + NR for (_, yn, _, _) in treble_pos) + 2
+            bass_key_top   = min(yn - NR for (_, yn, _, _) in bass_pos) - 2
+            bass_key_bot   = max(yn + NR for (_, yn, _, _) in bass_pos) + 2
+
         # Draw pianos aligned to note positions
         if show_piano:
-            self._draw_piano(treble_pos, treble_piano_top, NOTE_STEP)
-            self._draw_piano(bass_pos,   bass_piano_top,   NOTE_STEP)
+            self._draw_piano(treble_pos, treble_piano_top, NOTE_STEP,
+                             key_top=treble_key_top, key_bottom=treble_key_bot)
+            self._draw_piano(bass_pos,   bass_piano_top,   NOTE_STEP,
+                             key_top=bass_key_top,   key_bottom=bass_key_bot)
 
         rect = self.scene.itemsBoundingRect().adjusted(-28, -28, 28, 28)
         self.scene.setSceneRect(rect)
@@ -456,10 +482,10 @@ class MusicNotesApp(QMainWindow):
             sc.addEllipse(x - NW, y - NR, NW*2, NR*2, pen_n, brush_n)
 
             stem_up = step >= 4
-            if stem_up:
-                sc.addLine(x + NW - 1, y, x + NW - 1, y - STEM, stem_pen)
-            else:
-                sc.addLine(x - NW + 1, y, x - NW + 1, y + STEM, stem_pen)
+            # if stem_up:
+            #     sc.addLine(x + NW - 1, y, x + NW - 1, y - STEM, stem_pen)
+            # else:
+            #     sc.addLine(x - NW + 1, y, x - NW + 1, y + STEM, stem_pen)
 
             if not quiz:
                 name = self._note_name(note_idx)
@@ -480,88 +506,59 @@ class MusicNotesApp(QMainWindow):
         return positions
 
     # ── piano keyboard ─────────────────────────────────────────────────────────
-    def _draw_piano(self, positions, y_top, note_step):
+    def _draw_piano(self, positions, y_top, note_step, key_top=None, key_bottom=None):
         """
-        Draw a piano keyboard whose keys are exactly aligned with note x positions.
+        Draw a piano keyboard aligned with note x positions.
 
-        positions : [(x_note, y_note_center, note_idx, octave_int), …]  (in draw order)
-        y_top     : top y of the keyboard
-        note_step : pixels between adjacent notes == white key width
-
-        Each white key is drawn centred at its note’s x.
-        Black keys are drawn between adjacent notes when a semitone exists
-        there (i.e. NOT between E–F or B–C).
-        Straight vertical connector lines go from note-head bottom to key top.
+        key_top / key_bottom : if given (overlap mode), keys span exactly from
+                               key_top to key_bottom, covering only the note area.
         """
-        sc    = self.scene
-        quiz  = self.quiz_mode
-        WKW   = note_step          # key width == note spacing for perfect alignment
-        WKH   = PIANO_WKH
-        BKW   = int(WKW * 0.58)    # black key proportional width
-        BKH   = int(WKH * 0.63)
-        if   quiz:
+        sc      = self.scene
+        quiz    = self.quiz_mode
+        overlap = key_top is not None
+        WKW     = note_step
+        BKW     = int(WKW * 0.58)
+        opacity = self.cb_piano_opacity.value() / 100
+
+        # In overlap mode keys span exactly the note bounding box
+        draw_top = key_top  if overlap else y_top
+        draw_bot = key_bottom if (overlap and key_bottom is not None) else (y_top + PIANO_WKH)
+        WKH      = int(draw_bot - draw_top)
+        BKH      = int(WKH * 0.63)
+
+        if quiz:
             return
 
         wk_pen  = QPen(QColor(70, 70, 70), 1.0)
         bk_pen  = QPen(QColor(10, 10, 10), 0.8)
         bk_fill = QBrush(QColor(28, 28, 28))
+        y_bottom = draw_top + WKH   # == y_top + PIANO_WKH
 
-        # ── connector rects drawn FIRST so keys paint over the bottom portion ──
-        # A rectangle of key-width spans from note-head bottom down to y_top;
-        # the white key rect drawn afterward covers its lower section so the
-        # connector appears to end cleanly at the key border.
-        # for (xn, yn, nidx, oct_) in positions:
-        #     rect_top = yn + NR + 2
-        #     rect_h   = y_top - rect_top
-        #     if rect_h <= 0:
-        #         continue
-        #     c     = NOTE_COLORS[nidx]
-        #     pen   = QPen(c.darker(130), 1.0)
-        #     brush = QBrush(QColor(0, 0, 0, 0))  # transparent
-        #     sc.addLine(xn - WKW / 2, rect_top, xn + WKW / 2, rect_top, pen)
-
-        # ── white keys ──
+        # white keys
         for (xn, yn, nidx, oct_) in positions:
             kx     = xn - WKW / 2
-            if self.cb_piano_col.isChecked():
-                fill_c = NOTE_COLORS[nidx].lighter(160)
-            else:
-                fill_c =QColor(245, 245, 245)
-            sc.addRect(kx, y_top, WKW, WKH, wk_pen, QBrush(fill_c))
+            fill_c = NOTE_COLORS[nidx].lighter(160) if self.cb_piano_col.isChecked() \
+                     else QColor(245, 245, 245)
+            rect = sc.addRect(kx, draw_top, WKW, WKH, wk_pen, QBrush(fill_c))
+            rect.setZValue(-1)
+            rect.setOpacity(opacity)
 
-            # Note name at bottom of key (learn mode only)
-            if not quiz:
-                lbl = sc.addText(self._note_name(nidx),
-                                 QFont("Arial", 6, QFont.Weight.Bold))
-                lbl.setDefaultTextColor(NOTE_COLORS[nidx].darker(190))
-                lbl.setPos(
-                    xn - lbl.boundingRect().width() / 2,
-                    y_top + WKH - lbl.boundingRect().height() - 2,
-                )
-
-            # Octave number below the keyboard at C keys
-            if nidx == 0:   # C
+            if nidx == 0:   # C tick below keyboard
                 tick = QPen(QColor(140, 140, 140), 0.8)
-                sc.addLine(kx, y_top + WKH + 1, kx, y_top + WKH + 6, tick)
-                ot = sc.addText(str(oct_), QFont("Arial", 6))
-                ot.setDefaultTextColor(QColor(130, 130, 130))
-                ot.setPos(xn - ot.boundingRect().width() / 2, y_top + WKH + 4)
+                sc.addLine(kx, y_bottom + 1, kx, y_bottom + 6, tick)
 
-        # ── black keys ──
-        # Sort by ascending pitch so the rule is consistent regardless of
-        # whether notes are in score order (descending) or quiz (random).
-        # A semitone gap (black key) exists between every adjacent diatonic pair
-        # EXCEPT E–F (E is lower) and B–C (B is lower).
-        # So: skip when the LOWER note of the pair is E (idx 2) or B (idx 6).
-        sorted_pos = sorted(positions, key=lambda p: p[3] * 7 + p[2])  # low → high
+        # black keys
+        sorted_pos = sorted(positions, key=lambda p: p[3] * 7 + p[2])
         for i in range(len(sorted_pos) - 1):
-            nidx_lower = sorted_pos[i][2]       # pitch-lower key of the pair
-            if nidx_lower in {2, 6}:            # E–F or B–C: no semitone, no black key
+            nidx_lower = sorted_pos[i][2]
+            if nidx_lower in {2, 6}:
                 continue
             x_a = sorted_pos[i][0]
             x_b = sorted_pos[i + 1][0]
             bkx = (x_a + x_b) / 2 - BKW / 2
-            sc.addRect(bkx, y_top, BKW, BKH, bk_pen, bk_fill)
+            rect = sc.addRect(bkx, draw_top, BKW, BKH, bk_pen, bk_fill)
+            rect.setZValue(-0.5)
+            rect.setOpacity(opacity)
 
     # ── export ────────────────────────────────────────────────────────────────
     @staticmethod
