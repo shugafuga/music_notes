@@ -529,17 +529,18 @@ class MusicNotesApp(QMainWindow):
         if quiz:
             return
 
-        wk_pen  = QPen(QColor(70, 70, 70), 1.0)
+        no_pen  = QPen(Qt.PenStyle.NoPen)
+        sep_pen = QPen(QColor(110, 110, 110), 0.8)
         bk_pen  = QPen(QColor(10, 10, 10), 0.8)
         bk_fill = QBrush(QColor(28, 28, 28))
-        y_bottom = draw_top + WKH   # == y_top + PIANO_WKH
+        y_bottom = draw_top + WKH
 
-        # white keys
+        # White keys: filled, NO border pen (avoids visible edge lines under black keys)
         for (xn, yn, nidx, oct_) in positions:
             kx     = xn - WKW / 2
             fill_c = NOTE_COLORS[nidx].lighter(160) if self.cb_piano_col.isChecked() \
                      else QColor(245, 245, 245)
-            rect = sc.addRect(kx, draw_top, WKW, WKH, wk_pen, QBrush(fill_c))
+            rect = sc.addRect(kx, draw_top, WKW, WKH, no_pen, QBrush(fill_c))
             rect.setZValue(-1)
             rect.setOpacity(opacity)
 
@@ -547,8 +548,29 @@ class MusicNotesApp(QMainWindow):
                 tick = QPen(QColor(140, 140, 140), 0.8)
                 sc.addLine(kx, y_bottom + 1, kx, y_bottom + 6, tick)
 
-        # black keys
+        # Separator lines between white keys:
+        # - Where a black key sits: draw only the LOWER portion (below black key zone)
+        # - Where no black key (E-F, B-C): draw full height
         sorted_pos = sorted(positions, key=lambda p: p[3] * 7 + p[2])
+        for i in range(len(sorted_pos) - 1):
+            nidx_lower = sorted_pos[i][2]
+            x_sep = (sorted_pos[i][0] + sorted_pos[i + 1][0]) / 2
+            has_black = nidx_lower not in {2, 6}
+            sep_top = (draw_top + BKH) if has_black else draw_top
+            li = sc.addLine(x_sep, sep_top, x_sep, y_bottom, sep_pen)
+            li.setZValue(-0.8)
+            li.setOpacity(opacity)
+
+        # Outer border of the entire keyboard
+        bdr_pen = QPen(QColor(80, 80, 80), 1.2)
+        x_left  = sorted_pos[0][0]  - WKW / 2
+        x_right = sorted_pos[-1][0] + WKW / 2
+        bdr = sc.addRect(x_left, draw_top, x_right - x_left, WKH, bdr_pen,
+                         QBrush(Qt.BrushStyle.NoBrush))
+        bdr.setZValue(-0.7)
+        bdr.setOpacity(opacity)
+
+        # Black keys
         for i in range(len(sorted_pos) - 1):
             nidx_lower = sorted_pos[i][2]
             if nidx_lower in {2, 6}:
