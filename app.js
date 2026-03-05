@@ -49,11 +49,134 @@ const state = {
   // set by drawAll, read by exportPNG / size display
   _contentW:    0,
   _contentH:    0,
+  // hit areas for click-to-play; each entry: {x, y, nw, nr, noteIdx, octave}
+  _hitNotes:    [],
+  _noteScale:   1,
+  // currently highlighted notes: key = `${noteIdx}_${octave}` → count
+  _activeNotes: {},
 };
 
 let shuffledTreble = null;
 let shuffledBass   = null;
 let pendingDraw    = false;
+
+// ─── Audio ──────────────────────────────────────────────────────────────────
+let _audioCtx = null;
+function getAudioCtx() {
+  if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (_audioCtx.state === 'suspended') _audioCtx.resume();
+  return _audioCtx;
+}
+
+// Semitone offsets from C for diatonic degrees: C D E F G A B
+const NOTE_SEMITONES = [0, 2, 4, 5, 7, 9, 11];
+
+// ── Piano sample map: MIDI number → filename (no extension) ─────────────────
+// Samples are every 3 semitones (dim-7 pattern), mf_ velocity layer.
+const SAMPLE_DIR = 'samples/piano/grand/';
+const PIANO_SAMPLES = {
+   21: 'mf_a0',
+   24: 'mf_c1',  27: 'mf_d#1', 30: 'mf_f#1', 33: 'mf_a1',
+   36: 'mf_c2',  39: 'mf_d#2', 42: 'mf_f#2', 45: 'mf_a2',
+   48: 'mf_c3',  51: 'mf_lc_d#3', 54: 'mf_lc_f#3', 57: 'mf_lc_a3',
+   60: 'mf_c4',  63: 'mf_d#4', 66: 'mf_lc_f#4', 69: 'mf_a4',
+   72: 'mf_c5',  75: 'mf_d#5', 78: 'mf_f#5', 81: 'mf_a5',
+   84: 'mf_lc_c6', 87: 'mf_lc_d#6', 90: 'mf_lc_f#6', 93: 'mf_a6',
+   96: 'mf_c7',  99: 'mf_d#7', 102: 'mf_f#7', 105: 'mf_a7',
+  108: 'mf_c8',
+};
+const _sampleMidis  = Object.keys(PIANO_SAMPLES).map(Number).sort((a, b) => a - b);
+const _sampleCache  = {}; // midi → AudioBuffer
+
+function nearestSampleMidi(target) {
+  let best = _sampleMidis[0], bestDist = Infinity;
+  for (const m of _sampleMidis) {
+    const d = Math.abs(m - target);
+    if (d < bestDist) { bestDist = d; best = m; }
+  }
+  return best;
+}
+
+async function playNote(noteIdx, octave) {
+  const actx = getAudioCtx();
+  const midi  = (octave + 1) * 12 + NOTE_SEMITONES[noteIdx];
+  const sampleMidi = nearestSampleMidi(midi);
+
+  // Load and cache the decoded buffer on first use
+  if (!_sampleCache[sampleMidi]) {
+    // Encode filename: '#' must be '%23' or the browser treats it as URL fragment
+    const filename = PIANO_SAMPLES[sampleMidi].replace('#', '%23');
+    const url = SAMPLE_DIR + filename + '.mp3';
+    try {
+      const resp     = await fetch(url);
+      const arrayBuf = await resp.arrayBuffer();
+      _sampleCache[sampleMidi] = await actx.decodeAudioData(arrayBuf);
+    } catch (e) {
+      console.warn('Could not load sample', url, e);
+      return;
+    }
+  }
+
+  const buffer       = _sampleCache[sampleMidi];
+  const playbackRate = Math.pow(2, (midi - sampleMidi) / 12);
+  const now          = actx.currentTime;
+
+  const masterGain = actx.createGain();
+  masterGain.connect(actx.destination);
+  masterGain.gain.setValueAtTime(0.9, now);
+  masterGain.gain.exponentialRampToValueAtTime(0.0001, now + 5.0);
+
+  const src = actx.createBufferSource();
+  src.buffer             = buffer;
+  src.playbackRate.value = playbackRate;
+  src.connect(masterGain);
+  src.start(now);
+}
+
+function initAudioClick() {
+  const canvas = document.getElementById('main-canvas');
+
+  function logicalCoords(e) {
+    const rect = canvas.getBoundingClientRect();
+    const sc   = state._noteScale;
+    return { logX: (e.clientX - rect.left) / sc, logY: (e.clientY - rect.top) / sc };
+  }
+
+  function hitNote(logX, logY) {
+    for (const n of state._hitNotes) {
+      const dx = (logX - n.x) / (n.nw * 1.6);
+      const dy = (logY - n.y) / (n.nr * 1.6);
+      if (dx * dx + dy * dy <= 1) return n;
+    }
+    return null;
+  }
+
+  // Cursor: pointer only when hovering a note
+  canvas.addEventListener('mousemove', e => {
+    const { logX, logY } = logicalCoords(e);
+    canvas.style.cursor = hitNote(logX, logY) ? 'pointer' : 'default';
+  });
+  canvas.addEventListener('mouseleave', () => { canvas.style.cursor = 'default'; });
+
+  // Click: play + highlight for ~1.2 s
+  canvas.addEventListener('click', e => {
+    const { logX, logY } = logicalCoords(e);
+    const n = hitNote(logX, logY);
+    if (!n) return;
+    playNote(n.noteIdx, n.octave);
+    const key = `${n.noteIdx}_${n.octave}`;
+    state._activeNotes[key] = (state._activeNotes[key] || 0) + 1;
+    requestAnimationFrame(drawAll);
+    setTimeout(() => {
+      if (state._activeNotes[key] > 1) {
+        state._activeNotes[key]--;
+      } else {
+        delete state._activeNotes[key];
+      }
+      requestAnimationFrame(drawAll);
+    }, 1200);
+  });
+}
 
 // ─── Clef Images ──────────────────────────────────────────────────────────────
 const clefImgs = {
@@ -68,6 +191,11 @@ clefImgs.bass.onload   = () => scheduleDraw();
 // ─── Color Helpers ────────────────────────────────────────────────────────────
 function rgba({ r, g, b }, alpha = 1) {
   return `rgba(${r},${g},${b},${alpha})`;
+}
+
+/** Return true when a note is currently highlighted (playing). */
+function isNoteActive(noteIdx, octave) {
+  return !!state._activeNotes[`${noteIdx}_${octave}`];
 }
 
 /** Mimic Qt's QColor::darker(factor): multiply channels by 100/factor. */
@@ -268,6 +396,19 @@ function drawNotes(ctx, topY, xStart, noteStepPx, notes, quiz, useSolfege, label
     }
     ctx.restore();
 
+    // Active note glow (drawn before oval so oval sits on top)
+    if (isNoteActive(noteIdx, parseInt(octave, 10))) {
+      ctx.save();
+      const grad = ctx.createRadialGradient(x, y, nr * 0.4, x, y, nw * 2.6);
+      grad.addColorStop(0, rgba(fillColor, 0.55));
+      grad.addColorStop(1, rgba(fillColor, 0));
+      ctx.beginPath();
+      ctx.ellipse(x, y, nw * 2.6, nr * 2.6, 0, 0, 2 * Math.PI);
+      ctx.fillStyle = grad;
+      ctx.fill();
+      ctx.restore();
+    }
+
     // Note oval
     ctx.save();
     ctx.beginPath();
@@ -277,6 +418,14 @@ function drawNotes(ctx, topY, xStart, noteStepPx, notes, quiz, useSolfege, label
     ctx.strokeStyle = rgba(darkColor);
     ctx.lineWidth   = 1.5;
     ctx.stroke();
+    // Bright ring when active
+    if (isNoteActive(noteIdx, parseInt(octave, 10))) {
+      ctx.beginPath();
+      ctx.ellipse(x, y, nw + 3.5, nr + 3.5, 0, 0, 2 * Math.PI);
+      ctx.strokeStyle = 'rgba(255, 238, 60, 0.95)';
+      ctx.lineWidth   = 2;
+      ctx.stroke();
+    }
     ctx.restore();
 
     // Labels (hidden in quiz mode)
@@ -376,6 +525,16 @@ function drawPiano(ctx, positions, yTop, noteStepPx, colored, opacity) {
     ctx.strokeRect(bkx, yTop, BKW, BKH);
   }
 
+  // Active key highlight overlay (drawn on top of black keys)
+  ctx.globalAlpha = Math.min(opacity * 1.4, 1.0);
+  for (const { x, noteIdx, octave } of positions) {
+    if (isNoteActive(noteIdx, octave)) {
+      const kx = x - WKW / 2;
+      ctx.fillStyle = rgba(lighten(NOTE_COLORS[noteIdx], 210), 0.65);
+      ctx.fillRect(kx, yTop, WKW, WKH);
+    }
+  }
+
   ctx.restore();
 }
 
@@ -442,6 +601,16 @@ function drawPianoOverlap(ctx, positions, noteStepPx, colored, opacity, nr) {
     const bkx = (sorted[i].x + sorted[i + 1].x) / 2 - BKW / 2;
     ctx.fillStyle = colored ? 'rgba(20,20,30,0.45)' : 'rgba(20,20,30,0.4)';
     ctx.fillRect(bkx, yTop, BKW, BKH);
+  }
+
+  // Active key highlight overlay
+  ctx.globalAlpha = Math.min(opacity * 1.3, 1.0);
+  for (const { x, noteIdx, octave } of positions) {
+    if (isNoteActive(noteIdx, octave)) {
+      const kx = x - WKW / 2;
+      ctx.fillStyle = rgba(lighten(NOTE_COLORS[noteIdx], 200), 0.55);
+      ctx.fillRect(kx, yTop, WKW, WKH);
+    }
   }
 
   ctx.restore();
@@ -586,10 +755,17 @@ function drawAll() {
   drawStaff(ctx, BASS_TOP,   MARGIN_LEFT, xEnd, 'Bass Clef',   'bass');
 
   // ── Notes ────────────────────────────────────────────────────────────────
-  drawNotes(ctx, TREBLE_TOP, xStart, noteStep, trebleNotes,
+  const trebleDrawn = drawNotes(ctx, TREBLE_TOP, xStart, noteStep, trebleNotes,
     state.quizMode, state.useSolfege, state.labelNear, nw, nr);
-  drawNotes(ctx, BASS_TOP,   xStart, noteStep, bassNotes,
+  const bassDrawn   = drawNotes(ctx, BASS_TOP,   xStart, noteStep, bassNotes,
     state.quizMode, state.useSolfege, state.labelNear, nw, nr);
+
+  // Store hit areas for click-to-play
+  state._hitNotes  = [
+    ...trebleDrawn.map(p => ({ ...p, nw, nr })),
+    ...bassDrawn  .map(p => ({ ...p, nw, nr })),
+  ];
+  state._noteScale = sc;
 
   // ── Normal (below) piano keyboards ──────────────────────────────────────
   if (state.showPiano && !overlap && !state.quizMode) {
@@ -763,6 +939,8 @@ function initUI() {
     updateExportSizeDisplay();
   });
   document.getElementById('btn-export').addEventListener('click', exportPNG);
+
+  initAudioClick();
 
   // Initial draw
   scheduleDraw();
