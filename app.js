@@ -46,6 +46,7 @@ const state = {
   sheetMargin:  40,
   scale:        1.0,
   exportDpi:    150,
+  useKeyboard:  false,
   // set by drawAll, read by exportPNG / size display
   _contentW:    0,
   _contentH:    0,
@@ -178,7 +179,70 @@ function initAudioClick() {
   });
 }
 
-// ─── Clef Images ──────────────────────────────────────────────────────────────
+// ─── Keyboard Play ──────────────────────────────────────────────────────────
+// Keys ordered left-to-right; notes are assigned low→high
+const KEY_SEQUENCE = '1234567890-=qwertyuiop[]asdfghjkl;\'zxcvbnm,./';
+
+let _keyboardListener = null;
+
+/**
+ * Build a map: key char → {noteIdx, octave, nw, nr}
+ * from an array of note positions (sorted by pitch ascending).
+ */
+function buildKeyMap(positions) {
+  const sorted = [...positions].sort(
+    (a, b) => (a.octave * 7 + a.noteIdx) - (b.octave * 7 + b.noteIdx)
+  );
+  const map = {};
+  sorted.forEach((n, i) => {
+    if (i < KEY_SEQUENCE.length) map[KEY_SEQUENCE[i]] = n;
+  });
+  return map;
+}
+
+/**
+ * Build reverse map: `${noteIdx}_${octave}` → key char, for hint labels on canvas.
+ */
+function buildKeyHints(positions) {
+  const km = buildKeyMap(positions);
+  const hints = {};
+  for (const [k, n] of Object.entries(km)) hints[`${n.noteIdx}_${n.octave}`] = k;
+  return hints;
+}
+
+function initKeyboard() {
+  if (_keyboardListener) return;
+  _keyboardListener = e => {
+    if (!state.useKeyboard) return;
+    if (e.repeat) return;
+    const tag = document.activeElement?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    const pressed = e.key.length === 1 ? e.key.toLowerCase() : null;
+    if (!pressed) return;
+    const km = buildKeyMap(state._hitNotes);
+    const n  = km[pressed];
+    if (!n) return;
+    playNote(n.noteIdx, n.octave);
+    const key = `${n.noteIdx}_${n.octave}`;
+    state._activeNotes[key] = (state._activeNotes[key] || 0) + 1;
+    requestAnimationFrame(drawAll);
+    setTimeout(() => {
+      if (state._activeNotes[key] > 1) state._activeNotes[key]--;
+      else delete state._activeNotes[key];
+      requestAnimationFrame(drawAll);
+    }, 1200);
+  };
+  document.addEventListener('keydown', _keyboardListener);
+}
+
+function destroyKeyboard() {
+  if (_keyboardListener) {
+    document.removeEventListener('keydown', _keyboardListener);
+    _keyboardListener = null;
+  }
+}
+
+// ─── Clef Images ───────────────────────────────────────────────────────────────
 const clefImgs = {
   treble: new Image(),
   bass:   new Image(),
@@ -364,7 +428,7 @@ function drawStaff(ctx, topY, xStart, xEnd, labelText, clefType) {
  *           when notes are dense, to prevent overlap).
  * Returns [{x, y, noteIdx, octave}, …] for piano connectors.
  */
-function drawNotes(ctx, topY, xStart, noteStepPx, notes, quiz, useSolfege, labelNear, nw, nr) {
+function drawNotes(ctx, topY, xStart, noteStepPx, notes, quiz, useSolfege, labelNear, nw, nr, keyHints = {}) {
   const QUIZ_FILL = { r: 50, g: 50, b: 50 };
   const QUIZ_DARK = { r: 30, g: 30, b: 30 };
 
@@ -427,6 +491,17 @@ function drawNotes(ctx, topY, xStart, noteStepPx, notes, quiz, useSolfege, label
       ctx.stroke();
     }
     ctx.restore();
+
+    // Keyboard hint badge (key char above note head)
+    const kbHint = keyHints[`${noteIdx}_${parseInt(octave, 10)}`];
+    if (kbHint) {
+      ctx.save();
+      ctx.font      = `bold ${Math.max(7, nr * 0.95)}px monospace`;
+      ctx.fillStyle = 'rgba(255, 215, 40, 0.92)';
+      const hw = ctx.measureText(kbHint.toUpperCase()).width;
+      ctx.fillText(kbHint.toUpperCase(), x - hw / 2, y - nr - 4);
+      ctx.restore();
+    }
 
     // Labels (hidden in quiz mode)
     if (!quiz) {
@@ -744,6 +819,9 @@ function drawAll() {
   const treblePos = calcPositions(TREBLE_TOP, xStart, noteStep, trebleNotes);
   const bassPos   = calcPositions(BASS_TOP,   xStart, noteStep, bassNotes);
 
+  // Build keyboard hint labels (key char per note, shown on canvas when useKeyboard is on)
+  const keyHints = state.useKeyboard ? buildKeyHints([...treblePos, ...bassPos]) : {};
+
   // ── Overlap piano — drawn FIRST so notes appear on top ───────────────────
   if (overlap) {
     drawPianoOverlap(ctx, treblePos, noteStep, state.pianoColored, state.pianoOpacity, nr);
@@ -756,9 +834,9 @@ function drawAll() {
 
   // ── Notes ────────────────────────────────────────────────────────────────
   const trebleDrawn = drawNotes(ctx, TREBLE_TOP, xStart, noteStep, trebleNotes,
-    state.quizMode, state.useSolfege, state.labelNear, nw, nr);
+    state.quizMode, state.useSolfege, state.labelNear, nw, nr, keyHints);
   const bassDrawn   = drawNotes(ctx, BASS_TOP,   xStart, noteStep, bassNotes,
-    state.quizMode, state.useSolfege, state.labelNear, nw, nr);
+    state.quizMode, state.useSolfege, state.labelNear, nw, nr, keyHints);
 
   // Store hit areas for click-to-play
   state._hitNotes  = [
@@ -800,6 +878,7 @@ function saveSettings() {
       sheetMargin:  state.sheetMargin,
       scale:        state.scale,
       exportDpi:    state.exportDpi,
+      useKeyboard:  state.useKeyboard,
     }));
   } catch (_) {}
 }
@@ -814,7 +893,7 @@ function loadSettings() {
   def('showLedger');  def('ledgerCount'); def('showPiano');
   def('pianoOverlap'); def('pianoColored'); def('pianoOpacity');
   def('sheetBg');     def('sheetMargin'); def('scale');
-  def('exportDpi');
+  def('exportDpi');   def('useKeyboard');
 
   // Sync DOM to restored state
   document.getElementById('rb-solfege').checked        = state.useSolfege;
@@ -832,6 +911,7 @@ function loadSettings() {
   document.getElementById('sb-margin').value           = state.sheetMargin;
   document.getElementById('sl-scale').value            = Math.round(state.scale * 100);
   document.getElementById('sb-dpi').value              = state.exportDpi;
+  document.getElementById('cb-keyboard').checked        = state.useKeyboard;
   settingsLoaded = true;
 }
 
@@ -919,6 +999,14 @@ function initUI() {
   document.getElementById('sl-opacity').addEventListener('input', e => {
     state.pianoOpacity = e.target.value / 100; scheduleDraw();
   });
+
+  // Keyboard
+  document.getElementById('cb-keyboard').addEventListener('change', e => {
+    state.useKeyboard = e.target.checked;
+    if (state.useKeyboard) initKeyboard(); else destroyKeyboard();
+    scheduleDraw();
+  });
+  if (state.useKeyboard) initKeyboard();
 
   // Sheet
   document.getElementById('cp-sheet-bg').addEventListener('input', e => {
