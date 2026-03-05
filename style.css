@@ -1,0 +1,216 @@
+/* ─── Base ─────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Segoe UI', Arial, sans-serif;
+  font-size: 13px;
+  background: #12131a;
+  color: #c8cad4;
+  min-height: 100vh;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ─── Header ──────────────────────────────────────────────────────────────── */
+header {
+  background: #0d0e16;
+  color: #dde0f0;
+  padding: 10px 18px;
+  border-bottom: 1px solid #23253a;
+  box-shadow: 0 2px 8px rgba(0,0,0,.5);
+  flex-shrink: 0;
+}
+
+header h1 {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: .3px;
+}
+
+/* ─── Toolbar ─────────────────────────────────────────────────────────────── */
+#toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #1a1c2a;
+  border-bottom: 1px solid #2a2d42;
+  flex-shrink: 0;
+  box-shadow: 0 1px 6px rgba(0,0,0,.4);
+}
+
+fieldset.group {
+  border: 1px solid #2e3148;
+  border-radius: 6px;
+  padding: 5px 10px 7px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  background: #14162200;
+}
+
+fieldset.group legend {
+  font-size: 10px;
+  font-weight: 700;
+  color: #7880a8;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  padding: 0 4px;
+}
+
+fieldset.group label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  color: #b8bdd4;
+}
+
+fieldset.group label:hover { color: #7ea8ff; }
+
+fieldset.group input[type="radio"],
+fieldset.group input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: #5b82ff;
+}
+
+/* separator line between label groups inside fieldset */
+.sep {
+  display: inline-block;
+  width: 1px;
+  height: 18px;
+  background: #2e3148;
+  margin: 0 4px;
+}
+
+.sub-label {
+  color: #6c7290;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.hint {
+  color: #4a5070;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/* Number inputs */
+input[type="number"] {
+  width: 52px;
+  padding: 2px 4px;
+  border: 1px solid #2e3148;
+  border-radius: 4px;
+  font-size: 12px;
+  text-align: center;
+  background: #0e1020;
+  color: #c8cad4;
+}
+
+input[type="number"]:focus { outline: 2px solid #5b82ff; border-color: transparent; }
+
+/* Color picker */
+input[type="color"] {
+  width: 32px;
+  height: 22px;
+  border: 1px solid #2e3148;
+  border-radius: 4px;
+  padding: 1px 2px;
+  background: #0e1020;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+/* Range slider */
+#sl-opacity {
+  width: 90px;
+  accent-color: #5b82ff;
+  cursor: pointer;
+}
+
+/* Buttons */
+button {
+  padding: 4px 10px;
+  border: 1px solid #2e3148;
+  border-radius: 5px;
+  background: #1f2235;
+  color: #b8bdd4;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s, border-color .15s, color .15s;
+}
+
+button:hover {
+  background: #2a3060;
+  border-color: #5b82ff;
+  color: #a8c4ff;
+}
+
+button:active {
+  background: #1d254a;
+}
+
+#btn-export {
+  background: #3a5fd9;
+  color: #fff;
+  border-color: #2a4bbf;
+  font-weight: 600;
+}
+
+#btn-export:hover {
+  background: #4a6eee;
+  border-color: #5b82ff;
+  color: #fff;
+}
+
+/* ─── Canvas area ─────────────────────────────────────────────────────────── */
+#canvas-wrap {
+  flex: 1 1 auto;
+  overflow: auto;
+  background: #0c0d14;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  /* padding set dynamically by JS from the Margin control */
+}
+
+#main-canvas {
+  display: block;
+  flex-shrink: 0;           /* don't let flexbox squash it */
+  box-shadow: 0 4px 28px rgba(0,0,0,.6);
+  border-radius: 5px;
+}
+
+/* Zoom label */
+.zoom-label {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: #7880a8;
+  white-space: nowrap;
+  min-width: 34px;
+  display: inline-block;
+}
+
+/* Export size readout */
+.export-size {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: #7880a8;
+  white-space: nowrap;
+  min-width: 90px;
+  display: inline-block;
+}
+
+/* ─── Responsive tweaks ───────────────────────────────────────────────────── */
+@media (max-width: 700px) {
+  #toolbar { gap: 6px; padding: 6px 8px; }
+  fieldset.group { padding: 4px 8px 6px; }
+  #canvas-wrap { padding: 10px; }
+}
