@@ -29,10 +29,17 @@
       <!-- Ledger lines -->
       <fieldset class="group">
         <legend>Extra Ledger Lines</legend>
-        <label><input type="checkbox" id="cb-ledger" /> Show</label>
+        <label><input type="checkbox" id="cb-ledger" checked /> Show</label>
         <span class="sub-label">Count:</span>
-        <input type="number" id="sb-ledger" value="2" min="1" max="6" title="Groups above &amp; below each staff" />
+        <input type="number" id="sb-ledger" value="3" min="1" max="6" title="Groups above &amp; below each staff" />
         <span class="hint">(above &amp; below)</span>
+      </fieldset>
+
+      <!-- Colors -->
+      <fieldset class="group">
+        <legend>Colors</legend>
+        <label><input type="radio" name="color-mode" id="rb-color-note" checked /> By Note</label>
+        <label><input type="radio" name="color-mode" id="rb-color-octave" /> By Octave</label>
       </fieldset>
 
       <!-- Quiz -->
@@ -45,9 +52,9 @@
       <!-- Piano -->
       <fieldset class="group">
         <legend>Piano</legend>
-        <label><input type="checkbox" id="cb-piano" /> Show</label>
-        <label><input type="checkbox" id="cb-piano-overlap" /> Overlap</label>
-        <label><input type="checkbox" id="cb-piano-col" /> Colored</label>
+        <label><input type="checkbox" id="cb-piano" checked /> Show</label>
+        <label><input type="checkbox" id="cb-piano-overlap" checked /> Overlap</label>
+        <label><input type="checkbox" id="cb-piano-col" checked /> Colored</label>
         <label><input type="checkbox" id="cb-keyboard" /> Use Keyboard</label>
         <span class="sub-label">Opacity:</span>
         <input type="range" id="sl-opacity" min="0" max="100" value="100" />
@@ -59,10 +66,10 @@
         <span class="sub-label">Bg:</span>
         <input type="color" id="cp-sheet-bg" value="#ffffff" title="Sheet background color" />
         <span class="sub-label">Margin:</span>
-        <input type="number" id="sb-margin" value="40" min="0" max="200" title="Sheet inner margin (px)" />
+        <input type="number" id="sb-margin" value="55" min="0" max="200" title="Sheet inner margin (px)" />
         <span class="sep"></span>
         <span class="sub-label">Scale:</span>
-        <input type="range" id="sl-scale" min="50" max="300" value="100" step="10" title="Scale (resolution)" />
+        <input type="range" id="sl-scale" min="50" max="300" value="160" step="10" title="Scale (resolution)" />
         <span id="scale-label" class="zoom-label">100%</span>
       </fieldset>
 

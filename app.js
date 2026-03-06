@@ -36,15 +36,16 @@ const state = {
   useSolfege:   true,
   labelNear:    false,
   quizMode:     false,
-  showLedger:   false,
-  ledgerCount:  2,
-  showPiano:    false,
-  pianoOverlap: false,
-  pianoColored: false,
+  showLedger:   true,
+  ledgerCount:  3,
+  showPiano:    true,
+  pianoOverlap: true,
+  pianoColored: true,
   pianoOpacity: 1.0,
+  colorMode:    'note',   // 'note' | 'octave'
   sheetBg:      '#ffffff',
-  sheetMargin:  40,
-  scale:        1.0,
+  sheetMargin:  55,
+  scale:        1.6,
   exportDpi:    150,
   useKeyboard:  false,
   // set by drawAll, read by exportPNG / size display
@@ -190,7 +191,15 @@ let _keyboardListener = null;
  * from an array of note positions (sorted by pitch ascending).
  */
 function buildKeyMap(positions) {
-  const sorted = [...positions].sort(
+  // Deduplicate by pitch: treble & bass overlap in range, same pitch must map to one key
+  const seen = new Set();
+  const unique = positions.filter(n => {
+    const k = `${n.noteIdx}_${n.octave}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  const sorted = unique.sort(
     (a, b) => (a.octave * 7 + a.noteIdx) - (b.octave * 7 + b.noteIdx)
   );
   const map = {};
@@ -255,6 +264,39 @@ clefImgs.bass.onload   = () => scheduleDraw();
 // ─── Color Helpers ────────────────────────────────────────────────────────────
 function rgba({ r, g, b }, alpha = 1) {
   return `rgba(${r},${g},${b},${alpha})`;
+}
+
+// Hue assigned to each octave (index = octave number, 0-based safe)
+const OCTAVE_HUES = [0, 30, 70, 150, 200, 260, 300, 340];
+
+/** Convert HSL (h 0-360, s 0-100, l 0-100) to {r,g,b}. */
+function hslToRgb(h, s, l) {
+  s /= 100; l /= 100;
+  const k = n => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return {
+    r: Math.round(f(0) * 255),
+    g: Math.round(f(8) * 255),
+    b: Math.round(f(4) * 255),
+  };
+}
+
+/**
+ * Color by octave: unique hue per octave, saturation gradient across 7 notes
+ * (C = most saturated, B = least saturated within the octave).
+ */
+function octaveNoteColor(noteIdx, octave) {
+  const hue = OCTAVE_HUES[((octave - 1) % OCTAVE_HUES.length + OCTAVE_HUES.length) % OCTAVE_HUES.length];
+  const sat = 95 - noteIdx * 8; // 95% (C) → 47% (B)
+  return hslToRgb(hue, sat, 44);
+}
+
+/** Return fill color based on current colorMode. */
+function getNoteColor(noteIdx, octave) {
+  return state.colorMode === 'octave'
+    ? octaveNoteColor(noteIdx, octave)
+    : NOTE_COLORS[noteIdx];
 }
 
 /** Return true when a note is currently highlighted (playing). */
@@ -444,13 +486,14 @@ function drawNotes(ctx, topY, xStart, noteStepPx, notes, quiz, useSolfege, label
     const y = topY + step * (LS / 2);
     positions.push({ x, y, noteIdx, octave: parseInt(octave, 10) });
 
-    const fillColor = quiz ? QUIZ_FILL : NOTE_COLORS[noteIdx];
-    const darkColor = quiz ? QUIZ_DARK : darken(NOTE_COLORS[noteIdx]);
+    const oct       = parseInt(octave, 10);
+    const fillColor = quiz ? QUIZ_FILL : getNoteColor(noteIdx, oct);
+    const darkColor = quiz ? QUIZ_DARK : darken(getNoteColor(noteIdx, oct));
 
-    // Ledger lines
+    // Ledger lines — thinner than staff lines, constant physical pixel width regardless of scale
     ctx.save();
-    ctx.strokeStyle = '#141414';
-    ctx.lineWidth   = 1.5;
+    ctx.strokeStyle = 'rgba(20,20,20,0.65)';
+    ctx.lineWidth   = 0.8 / (state.scale * (window.devicePixelRatio || 1));
     for (const ls of ledgerSteps) {
       const ly = topY + ls * (LS / 2);
       ctx.beginPath();
@@ -461,7 +504,7 @@ function drawNotes(ctx, topY, xStart, noteStepPx, notes, quiz, useSolfege, label
     ctx.restore();
 
     // Active note glow (drawn before oval so oval sits on top)
-    if (isNoteActive(noteIdx, parseInt(octave, 10))) {
+    if (isNoteActive(noteIdx, oct)) {
       ctx.save();
       const grad = ctx.createRadialGradient(x, y, nr * 0.4, x, y, nw * 2.6);
       grad.addColorStop(0, rgba(fillColor, 0.55));
@@ -483,7 +526,7 @@ function drawNotes(ctx, topY, xStart, noteStepPx, notes, quiz, useSolfege, label
     ctx.lineWidth   = 1.5;
     ctx.stroke();
     // Bright ring when active
-    if (isNoteActive(noteIdx, parseInt(octave, 10))) {
+    if (isNoteActive(noteIdx, oct)) {
       ctx.beginPath();
       ctx.ellipse(x, y, nw + 3.5, nr + 3.5, 0, 0, 2 * Math.PI);
       ctx.strokeStyle = 'rgba(255, 238, 60, 0.95)';
@@ -493,7 +536,7 @@ function drawNotes(ctx, topY, xStart, noteStepPx, notes, quiz, useSolfege, label
     ctx.restore();
 
     // Keyboard hint badge (key char above note head)
-    const kbHint = keyHints[`${noteIdx}_${parseInt(octave, 10)}`];
+    const kbHint = keyHints[`${noteIdx}_${oct}`];
     if (kbHint) {
       ctx.save();
       ctx.font      = `bold ${Math.max(7, nr * 0.95)}px monospace`;
@@ -520,7 +563,7 @@ function drawNotes(ctx, topY, xStart, noteStepPx, notes, quiz, useSolfege, label
       // Octave badge (top-right of note head)
       ctx.font      = '7px Arial';
       ctx.fillStyle = 'rgba(100,100,100,0.85)';
-      ctx.fillText(octave, x + nw, y - nr - 2);
+      ctx.fillText(oct, x + nw, y - nr - 2);
       ctx.restore();
     }
   }
@@ -547,10 +590,10 @@ function drawPiano(ctx, positions, yTop, noteStepPx, colored, opacity) {
   ctx.globalAlpha = opacity;
 
   // White key bodies (no stroke to avoid visible seams under black keys)
-  for (const { x, noteIdx } of positions) {
+  for (const { x, noteIdx, octave } of positions) {
     const kx   = x - WKW / 2;
     const fill = colored
-      ? rgba(lighten(NOTE_COLORS[noteIdx], 160))
+      ? rgba(lighten(getNoteColor(noteIdx, octave), 160))
       : '#f5f5f5';
     ctx.fillStyle = fill;
     ctx.fillRect(kx, yTop, WKW, WKH);
@@ -605,7 +648,7 @@ function drawPiano(ctx, positions, yTop, noteStepPx, colored, opacity) {
   for (const { x, noteIdx, octave } of positions) {
     if (isNoteActive(noteIdx, octave)) {
       const kx = x - WKW / 2;
-      ctx.fillStyle = rgba(lighten(NOTE_COLORS[noteIdx], 210), 0.65);
+      ctx.fillStyle = rgba(lighten(getNoteColor(noteIdx, octave), 210), 0.65);
       ctx.fillRect(kx, yTop, WKW, WKH);
     }
   }
@@ -640,10 +683,10 @@ function drawPianoOverlap(ctx, positions, noteStepPx, colored, opacity, nr) {
   ctx.globalAlpha = opacity;
 
   // White key bodies
-  for (const { x, noteIdx } of positions) {
+  for (const { x, noteIdx, octave } of positions) {
     const kx   = x - WKW / 2;
     const fill = colored
-      ? rgba(lighten(NOTE_COLORS[noteIdx], 150), 0.35)
+      ? rgba(lighten(getNoteColor(noteIdx, octave), 150), 0.35)
       : 'rgba(255,255,255,0.18)';
     ctx.fillStyle = fill;
     ctx.fillRect(kx, yTop, WKW, WKH);
@@ -683,7 +726,7 @@ function drawPianoOverlap(ctx, positions, noteStepPx, colored, opacity, nr) {
   for (const { x, noteIdx, octave } of positions) {
     if (isNoteActive(noteIdx, octave)) {
       const kx = x - WKW / 2;
-      ctx.fillStyle = rgba(lighten(NOTE_COLORS[noteIdx], 200), 0.55);
+      ctx.fillStyle = rgba(lighten(getNoteColor(noteIdx, octave), 200), 0.55);
       ctx.fillRect(kx, yTop, WKW, WKH);
     }
   }
@@ -874,6 +917,7 @@ function saveSettings() {
       pianoOverlap: state.pianoOverlap,
       pianoColored: state.pianoColored,
       pianoOpacity: state.pianoOpacity,
+      colorMode:    state.colorMode,
       sheetBg:      state.sheetBg,
       sheetMargin:  state.sheetMargin,
       scale:        state.scale,
@@ -892,6 +936,7 @@ function loadSettings() {
   def('useSolfege');  def('labelNear');   def('quizMode');
   def('showLedger');  def('ledgerCount'); def('showPiano');
   def('pianoOverlap'); def('pianoColored'); def('pianoOpacity');
+  def('colorMode');
   def('sheetBg');     def('sheetMargin'); def('scale');
   def('exportDpi');   def('useKeyboard');
 
@@ -905,8 +950,10 @@ function loadSettings() {
   document.getElementById('sb-ledger').value           = state.ledgerCount;
   document.getElementById('cb-piano').checked          = state.showPiano;
   document.getElementById('cb-piano-overlap').checked  = state.pianoOverlap;
-  document.getElementById('cb-piano-col').checked      = state.pianoColored;
-  document.getElementById('sl-opacity').value          = Math.round(state.pianoOpacity * 100);
+  document.getElementById('cb-piano-col').checked           = state.pianoColored;
+  document.getElementById('sl-opacity').value               = Math.round(state.pianoOpacity * 100);
+  document.getElementById('rb-color-note').checked          = state.colorMode === 'note';
+  document.getElementById('rb-color-octave').checked        = state.colorMode === 'octave';
   document.getElementById('cp-sheet-bg').value         = state.sheetBg;
   document.getElementById('sb-margin').value           = state.sheetMargin;
   document.getElementById('sl-scale').value            = Math.round(state.scale * 100);
@@ -984,6 +1031,14 @@ function initUI() {
     shuffledTreble = null;
     shuffledBass   = null;
     scheduleDraw();
+  });
+
+  // Color mode
+  document.getElementById('rb-color-note').addEventListener('change', () => {
+    state.colorMode = 'note';   scheduleDraw();
+  });
+  document.getElementById('rb-color-octave').addEventListener('change', () => {
+    state.colorMode = 'octave'; scheduleDraw();
   });
 
   // Piano
